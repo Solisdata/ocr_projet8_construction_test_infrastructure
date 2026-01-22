@@ -1,0 +1,158 @@
+# load_meteo_data_mongodb.py
+
+import json
+import boto3
+from pymongo import MongoClient
+from datetime import datetime
+
+# 1 - configuration sources (S3) et destination (MONGODB)
+
+# CONFIGURATION  CONNEXION MONGODB
+
+MONGO_URI = "mongodb://localhost:27017/"
+DB_NAME = "meteo_db"
+COLLECTION_NAME = "meteo_collection"
+
+# CONNEXION MONGO
+
+def get_mongodb_collections():
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    print("Connexion à MongoDB établie.")
+    return db[COLLECTION_NAME]
+
+# CONFIGURATION CONNEXION SOURCE S3
+
+BUCKET_NAME = "ocr-projet8"
+s3_prefix = "raw_meteo_data/meteo_dataset/"
+
+# fonction pour prendre le dernier fichier chargé dans le bucket
+def get_latest_s3_key(bucket_name, prefix):
+    s3 = boto3.client("s3")
+
+    response = s3.list_objects_v2(
+        Bucket=bucket_name,
+        Prefix=prefix
+    )
+
+    if "Contents" not in response:
+        raise ValueError(f"Aucun fichier trouvé dans {prefix}")
+
+    latest_object = max(
+        response["Contents"],
+        key=lambda x: x["LastModified"]
+    )
+
+    print(f"✓ Dernier fichier détecté : {latest_object['Key']}")
+    return latest_object["Key"]
+
+s3_key = get_latest_s3_key(BUCKET_NAME, s3_prefix)
+
+# je charge le fichier
+def load_s3_jsonl(bucket_name, key):
+    s3 = boto3.client("s3")
+    response = s3.get_object(Bucket=bucket_name, Key=key)
+    lines = response["Body"].read().decode("utf-8").splitlines()
+
+    records = [json.loads(line) for line in lines]
+    print(f"✓ {len(records)} lignes JSONL chargées")
+    return records
+
+df = load_s3_jsonl(BUCKET_NAME, s3_key)
+#j'observe les clés
+print("type fichier:",type(df))
+
+#j'extrait les la partie qui m'interessent qui se trouvent dans airbyte_date
+meteo_data = [row["_airbyte_data"] for row in df]
+print("type fichier info météo", type(meteo_data))
+print("clés meteo_data", meteo_data[0].keys())
+
+#j'extrait les données qui m'interessent (metadata, stations et hourly)
+stations = [] #liste de dictionnaires : description des stations
+hourly_list = [] #dictionnaire de listes par stations --> transformé en liste de dictionnaires
+metadata = {} # dictionnaire unique : 
+
+for i in meteo_data:
+    # Stations
+    stations.extend(i.get("stations", [])) #Pour chaque liste du JSON, on prend les dictionnaires qui sont dans stations quand on trouve la clé stations
+    
+    # Hourly
+    hourly_dict = i.get("hourly", {})
+    for station_id, measures in hourly_dict.items():
+        if station_id == "_params":  # ignorer les paramètres généraux
+            continue
+        for measure in measures:
+            # Ajouter l'id de la station à chaque mesure
+            # measure["station_id"] = station_id
+            hourly_list.append(measure)
+        #on parcourt toutes les stations dans hourly  et on accumule toutes les mesures dans une liste globale en on ajoute l’identifiant de la station à chaque mesure,
+
+    # Metadata
+    metadata = i.get("metadata", {})
+
+print("clé stations:", stations[0].keys())
+print(f"✓ Nombre de lignes stations chargées : {len(stations)}") 
+print("clé hourly:", hourly_list[0].keys())
+print(f"✓ Nombre de lignes horaires chargées : {len(hourly_list)}") 
+
+
+
+#Modifications des données 
+
+def remove_duplicates(records, unique_fields):
+    # Crée un dictionnaire avec pour clé le tuple des champs uniques
+    cleaned_dict = {tuple(record[f] for f in unique_fields): record for record in records}
+    
+    # Convertit les valeurs du dictionnaire en liste
+    cleaned_list = list(cleaned_dict.values())
+    
+    print(f"✓ Total lignes avant suppression : {len(records)}")
+    print(f"✓ Total lignes après suppression : {len(cleaned_list)}")
+    print(f"✓ Doublons supprimés : {len(records) - len(cleaned_list)}")
+    
+    return cleaned_list
+
+# Suppression des doublons dans hourly_list
+hourly_list = remove_duplicates(hourly_list, ["id_station", "dh_utc"])
+
+# Pour les stations
+stations = remove_duplicates(stations, ["id"])
+
+
+#pour les listes 
+def clean_and_prepare_hourly(hourly_list):
+    """
+    Nettoie, convertit les types de la liste de mesures horaires.
+    """
+    cleaned_list = []
+
+    for h in hourly_list:
+        # Ignorer les lignes qui n'ont pas id_station ou dh_utc
+        if "id_station" not in h or "dh_utc" not in h:
+            continue
+
+        try:
+            # Typage
+            h["dh_utc"] = datetime.strptime(h["dh_utc"], "%Y-%m-%d %H:%M:%S")
+            h["temperature"] = float(h["temperature"])
+            h["pression"] = float(h["pression"])
+            h["humidite"] = int(h["humidite"])
+            h["point_de_rosee"] = float(h["point_de_rosee"])
+            h["visibilite"] = int(h["visibilite"])
+            h["vent_moyen"] = float(h["vent_moyen"])
+            h["vent_rafales"] = float(h["vent_rafales"])
+            h["vent_direction"] = int(h["vent_direction"])
+            h["pluie_3h"] = float(h["pluie_3h"]) if h["pluie_3h"] not in (None, "") else 0.0
+            h["pluie_1h"] = float(h["pluie_1h"]) if h["pluie_1h"] not in (None, "") else 0.0
+            h["neige_au_sol"] = float(h["neige_au_sol"]) if h["neige_au_sol"] not in (None, "") else 0.0
+            h["nebulosite"] = int(h["nebulosite"]) if h["nebulosite"] not in (None, "") else None
+            # temps_omm reste tel quel (str ou None)
+
+            cleaned_list.append(h)
+
+        except Exception as e:
+            # ignorer et log les lignes malformées
+            print(f"⚠️ Ligne ignorée pour erreur de typage : {h}\nErreur: {e}")
+
+    print(f"✓ Lignes initiales : {len(hourly_list)}")
+    print(f"✓ Lignes après nettoyage et typage : {len(cleaned_list)}")
