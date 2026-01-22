@@ -5,21 +5,7 @@ import boto3
 from pymongo import MongoClient
 from datetime import datetime
 
-# 1 - configuration sources (S3) et destination (MONGODB)
 
-# CONFIGURATION  CONNEXION MONGODB
-
-MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "meteo_db"
-COLLECTION_NAME = "meteo_collection"
-
-# CONNEXION MONGO
-
-def get_mongodb_collections():
-    client = MongoClient(MONGO_URI)
-    db = client[DB_NAME]
-    print("Connexion à MongoDB établie.")
-    return db[COLLECTION_NAME]
 
 # CONFIGURATION CONNEXION SOURCE S3
 
@@ -119,40 +105,124 @@ hourly_list = remove_duplicates(hourly_list, ["id_station", "dh_utc"])
 stations = remove_duplicates(stations, ["id"])
 
 
-#pour les listes 
+#pour les données horaires 
+from datetime import datetime
+
 def clean_and_prepare_hourly(hourly_list):
     """
-    Nettoie, convertit les types de la liste de mesures horaires.
+    # récupérer la température, None si pas de valeur ou mauvaise : faire pour les autres valeurs
+    
     """
     cleaned_list = []
-
     for h in hourly_list:
-        # Ignorer les lignes qui n'ont pas id_station ou dh_utc
-        if "id_station" not in h or "dh_utc" not in h:
-            continue
-
+        # récupérer la température, None si pas de valeur ou mauvaise
         try:
-            # Typage
-            h["dh_utc"] = datetime.strptime(h["dh_utc"], "%Y-%m-%d %H:%M:%S")
-            h["temperature"] = float(h["temperature"])
-            h["pression"] = float(h["pression"])
-            h["humidite"] = int(h["humidite"])
-            h["point_de_rosee"] = float(h["point_de_rosee"])
-            h["visibilite"] = int(h["visibilite"])
-            h["vent_moyen"] = float(h["vent_moyen"])
-            h["vent_rafales"] = float(h["vent_rafales"])
-            h["vent_direction"] = int(h["vent_direction"])
-            h["pluie_3h"] = float(h["pluie_3h"]) if h["pluie_3h"] not in (None, "") else 0.0
-            h["pluie_1h"] = float(h["pluie_1h"]) if h["pluie_1h"] not in (None, "") else 0.0
-            h["neige_au_sol"] = float(h["neige_au_sol"]) if h["neige_au_sol"] not in (None, "") else 0.0
-            h["nebulosite"] = int(h["nebulosite"]) if h["nebulosite"] not in (None, "") else None
-            # temps_omm reste tel quel (str ou None)
+            temperature_value = float(h.get("temperature", None))
+        except (ValueError, TypeError):
+            temperature_value = None
 
-            cleaned_list.append(h)
-
-        except Exception as e:
-            # ignorer et log les lignes malformées
-            print(f"⚠️ Ligne ignorée pour erreur de typage : {h}\nErreur: {e}")
+        # Vérification température
+        if temperature_value is None or -50 <= temperature_value <= 50:
+            cleaned_list.append(h)  # garder la ligne même si temp manquante
+        else:
+            print(f"⚠️ Temperature aberrante supprimée : {h['id_station']} {h.get('dh_utc')} = {temperature_value}")
 
     print(f"✓ Lignes initiales : {len(hourly_list)}")
-    print(f"✓ Lignes après nettoyage et typage : {len(cleaned_list)}")
+    print(f"✓ Lignes après cleaning : {len(cleaned_list)}")
+
+    return cleaned_list
+
+
+clean_and_prepare_hourly(hourly_list)
+
+
+##AJOUTER LA NORMALISATION POUR LES AUTRES STATIONS
+
+
+
+# INSERTION DANS MONGODB
+
+# CONFIGURATION  CONNEXION MONGODB
+
+MONGO_URI = "mongodb://localhost:27017/"
+DB_NAME  = "meteo_db"
+
+# CONNEXION MONGO
+
+def get_mongodb_collections():
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    print("Connexion à MongoDB établie.")
+    return db["stations"], db["metadata"], db["hourly"]
+
+
+
+# Collections
+stations_col, metadata_col, hourly_col = get_mongodb_collections()
+
+
+# ----------------------------
+# Index uniques pour éviter doublons
+# ----------------------------
+stations_col.create_index("id", unique=True)
+hourly_col.create_index([("id_station", 1), ("dh_utc", 1)], unique=True)
+# metadata : pas d'index unique nécessaire ici (un seul document)
+
+# ----------------------------
+# Insertion stations
+# ----------------------------
+if stations:
+    result = stations_col.insert_many(stations)
+    print(f"✓ {len(result.inserted_ids)} stations insérées")
+
+# ----------------------------
+# Insertion metadata
+# ----------------------------
+if metadata:
+    # metadata est un dict, on le transforme en liste de dict avec _id si nécessaire
+    metadata_doc = metadata.copy()  # pour ne pas modifier l'original
+    metadata_col.insert_one(metadata_doc)
+    print(f"✓ Metadata insérée")
+
+# ----------------------------
+# Insertion hourly
+# ----------------------------
+if hourly_list:
+    result = hourly_col.insert_many(hourly_list)
+    print(f"✓ {len(result.inserted_ids)} mesures horaires insérées")
+
+
+
+'''
+si je veux dans une seule collection  : 
+combined_list = []
+
+for h in hourly_list:
+    # trouver la station correspondante
+    station = next((s for s in stations if s["id"] == h["id_station"]), {})
+    
+    # construire un document unique
+    doc = {
+        "id_station": h["id_station"],
+        "dh_utc": h["dh_utc"],
+        "temperature": h.get("temperature"),
+        "pression": h.get("pression"),
+        "humidite": h.get("humidite"),
+        "point_de_rosee": h.get("point_de_rosee"),
+        "visibilite": h.get("visibilite"),
+        "vent_moyen": h.get("vent_moyen"),
+        "vent_rafales": h.get("vent_rafales"),
+        "vent_direction": h.get("vent_direction"),
+        "pluie_3h": h.get("pluie_3h"),
+        "pluie_1h": h.get("pluie_1h"),
+        "neige_au_sol": h.get("neige_au_sol"),
+        "nebulosite": h.get("nebulosite"),
+        "temps_omm": h.get("temps_omm"),
+        # infos station imbriquées
+        "station": station,
+        # metadata complet imbriqué
+        "metadata": metadata
+    }
+    combined_list.append(doc)
+
+'''
