@@ -1,0 +1,370 @@
+# load_meteo_data_mongodb.py
+
+import json
+import boto3
+from pymongo import MongoClient
+from datetime import datetime
+
+
+
+# CONFIGURATION CONNEXION SOURCE S3
+
+BUCKET_NAME = "ocr-projet8"
+df1_infoclimat_prefix = "raw_meteo_data/meteo_dataset/"
+df2_amateur_france = "raw_meteo_data/meteo_station_amateur_france/"
+df3_amateur_belgique = "raw_meteo_data/meteo_station_amateur_belgique/"
+
+# fonction pour prendre le dernier fichier chargé dans le bucket
+def get_latest_s3_key(bucket_name, prefix):
+    s3 = boto3.client("s3")
+
+    response = s3.list_objects_v2(
+        Bucket=bucket_name,
+        Prefix=prefix
+    )
+
+    if "Contents" not in response:
+        raise ValueError(f"Aucun fichier trouvé dans {prefix}")
+
+    latest_object = max(
+        response["Contents"],
+        key=lambda x: x["LastModified"]
+    )
+
+    print(f"✓ Dernier fichier détecté : {latest_object['Key']}")
+    return latest_object["Key"]
+
+### définition des clés pour avoir nos documents
+df1_infoclimat_key = get_latest_s3_key(BUCKET_NAME, df1_infoclimat_prefix)
+df2_amateur_france_key = get_latest_s3_key(BUCKET_NAME, df2_amateur_france)
+df3_amateur_belgique_key = get_latest_s3_key(BUCKET_NAME, df3_amateur_belgique)
+
+
+# je charge le fichier
+def load_s3_jsonl(bucket_name, key):
+    s3 = boto3.client("s3")
+    response = s3.get_object(Bucket=bucket_name, Key=key)
+    lines = response["Body"].read().decode("utf-8").splitlines()
+
+    records = [json.loads(line) for line in lines]
+    print(f"\n CHARGEMENT FICHIER {key}] ")
+    print(f"{len(records)} lignes JSONL chargées")
+    print("type fichier:",type(key))
+    return records
+
+df1_infoclimat = load_s3_jsonl(BUCKET_NAME, df1_infoclimat_key)
+df2_amateur_france = load_s3_jsonl(BUCKET_NAME, df2_amateur_france_key)
+df3_amateur_belgique = load_s3_jsonl(BUCKET_NAME, df3_amateur_belgique_key)
+
+
+#j'extrait les la partie qui m'interessent qui se trouvent dans airbyte_date
+def extract_airbyte_data(rows, source_name=""):
+    meteo_data = [row["_airbyte_data"] for row in rows]
+
+    print(f"\n EXTRACT [{source_name}] ")
+    print(f" type :", type(meteo_data))
+    print(f" nb lignes :", len(meteo_data))
+    print(f" clés :", meteo_data[0].keys())
+
+    return meteo_data
+
+
+meteo_infoclimat = extract_airbyte_data(df1_infoclimat, "infoclimat")
+meteo_france_amateur = extract_airbyte_data(df2_amateur_france, "france_amateur")
+meteo_belgique_amateur = extract_airbyte_data(df3_amateur_belgique, "belgique_amateur")
+
+
+#INFOCLIMAT
+#j'extrait les données qui m'interessent (metadata, stations et hourly)
+stations = [] #liste de dictionnaires : description des stations
+hourly_list = [] #dictionnaire de listes par stations --> transformé en liste de dictionnaires
+metadata = {} # dictionnaire unique : 
+
+for i in meteo_infoclimat:
+    # Stations
+    stations.extend(i.get("stations", [])) #Pour chaque liste du JSON, on prend les dictionnaires qui sont dans stations quand on trouve la clé stations
+    
+    # Hourly
+    hourly_dict = i.get("hourly", {})
+    for station_id, measures in hourly_dict.items():
+        if station_id == "_params":  # ignorer les paramètres généraux
+            continue
+        for measure in measures:
+            # Ajouter l'id de la station à chaque mesure
+            # measure["station_id"] = station_id
+            hourly_list.append(measure)
+        #on parcourt toutes les stations dans hourly  et on accumule toutes les mesures dans une liste globale en on ajoute l’identifiant de la station à chaque mesure,
+
+    # Metadata
+    metadata = i.get("metadata", {})
+
+print("\n CLE INFOCLIMAT")
+print("clé stations:", stations[0].keys())
+print(f"✓ Nombre de lignes stations chargées : {len(stations)}") 
+print("clé hourly:", hourly_list[0].keys())
+print(f"✓ Nombre de lignes horaires chargées : {len(hourly_list)}") 
+
+
+#STATIONS AMATEURS
+
+## j'ajoute les infos sur la station à la collection stations
+stations.append({
+    "id": "ILAMAD25",
+    "name": "La Madeleine",
+    "latitude": 50.659,
+    "longitude": 3.07,
+    "elevation": 23,
+    "city": "La Madeleine",
+    "state": "-/-",
+    "hardware": "other",
+    "software": "EasyWeatherPro_V5.1.6"
+})
+
+stations.append({
+    "id": "IICHTE19",
+    "name": "WeerstationBS",
+    "latitude": 51.092,
+    "longitude": 2.999,
+    "elevation": 15,
+    "city": "Ichtegem",
+    "state": "-/-",
+    "hardware": "other",
+    "software": "EasyWeatherV1.6.6"
+})
+
+##nettoyage de Hourly
+
+
+
+
+## NORMALISATION de Hourly
+from datetime import datetime
+
+def normalize_hourly_amateur(df, station_id):
+    """
+    Transforme une liste de mesures amateurs en format standard (comme Infoclimat).
+    - Nettoie les chaînes de caractères (°F, mph, in, % etc.)
+    - Convertit en unités standard : °C, m/s, mm, hPa
+    - Gère les valeurs manquantes en mettant None
+    """
+    
+    df_normalized = []
+
+    # correspondance clés source → clés standard
+    key_map = {
+        "Temperature": "temperature",
+        "Pressure": "pression",
+        "Humidity": "humidite",
+        "Dew Point": "point_de_rosee",
+        "Speed": "vent_moyen",
+        "Gust": "vent_rafales",
+        "Precip. Rate.": "pluie_1h",
+        "Precip. Accum.": "pluie_3h",
+        "Time": "dh_utc"
+    }
+
+    def clean_val(val, target_key):
+        if val is None:
+            return None
+        val_str = str(val).replace("\xa0","").replace("%","").replace("°F","") \
+                           .replace("in","").replace("mph","").replace("w/m²","").strip()
+        try:
+            v = float(val_str)
+        except ValueError:
+            return None
+
+        # Conversion unités
+        if target_key == "temperature" or target_key == "point_de_rosee":
+            v = (v - 32) * 5/9       # °F → °C
+        elif target_key in ["vent_moyen", "vent_rafales"]:
+            v = v * 0.44704          # mph → m/s
+        elif target_key in ["pluie_1h","pluie_3h"]:
+            v = v * 25.4             # in → mm
+        elif target_key == "pression":
+            v = v * 33.8639          # inHg → hPa
+        # humidite reste en %
+        return v
+
+    for row in df:
+        doc = {"id_station": station_id}
+
+        for src_key, target_key in key_map.items():
+            val = row.get(src_key)
+            if target_key == "dh_utc":
+                # convertit Time en ISO string (HH:MM:SS)
+                try:
+                    doc[target_key] = datetime.strptime(val, "%H:%M:%S").isoformat()
+                except Exception:
+                    doc[target_key] = None
+            else:
+                doc[target_key] = clean_val(val, target_key)
+
+        df_normalized.append(doc)
+
+    print(f"\nNORMALISATION [{station_id}]")
+    print(f"✓ {len(df_normalized)} lignes normalisées")
+    print("Clés :", df_normalized[0].keys())
+    print("Extrait :", df_normalized[0])  
+
+    return df_normalized
+
+hourly_france = normalize_hourly_amateur(meteo_france_amateur, "ILAMAD25")
+hourly_belgique = normalize_hourly_amateur(meteo_belgique_amateur, "IICHTE19")
+
+
+
+#Modifications des données 
+
+def remove_duplicates(records, unique_fields):
+    # Crée un dictionnaire avec pour clé le tuple des champs uniques
+    cleaned_dict = {tuple(record[f] for f in unique_fields): record for record in records}
+    
+    # Convertit les valeurs du dictionnaire en liste
+    cleaned_list = list(cleaned_dict.values())
+    
+    print(f"✓ Total lignes avant suppression : {len(records)}")
+    print(f"✓ Total lignes après suppression : {len(cleaned_list)}")
+    print(f"✓ Doublons supprimés : {len(records) - len(cleaned_list)}")
+    
+    return cleaned_list
+
+# Suppression des doublons dans hourly_list
+hourly_list = remove_duplicates(hourly_list, ["id_station", "dh_utc"])
+hourly_france = remove_duplicates(hourly_france, ["id_station", "dh_utc"])
+hourly_belgique = remove_duplicates(hourly_belgique, ["id_station", "dh_utc"])
+
+# Pour les stations
+stations = remove_duplicates(stations, ["id"])
+
+
+#pour les données horaires 
+from datetime import datetime
+
+def clean_and_prepare_hourly(hourly_list):
+    """
+    # récupérer la température, None si pas de valeur ou mauvaise : faire pour les autres valeurs
+    
+    """
+    cleaned_list = []
+    for h in hourly_list:
+        # récupérer la température, None si pas de valeur ou mauvaise
+        try:
+            temperature_value = float(h.get("temperature", None))
+        except (ValueError, TypeError):
+            temperature_value = None
+
+        # Vérification température
+        if temperature_value is None or -50 <= temperature_value <= 50:
+            cleaned_list.append(h)  # garder la ligne même si temp manquante
+        else:
+            print(f"⚠️ Temperature aberrante supprimée : {h['id_station']} {h.get('dh_utc')} = {temperature_value}")
+
+    print(f"✓ Lignes initiales : {len(hourly_list)}")
+    print(f"✓ Lignes après cleaning : {len(cleaned_list)}")
+
+    return cleaned_list
+
+
+hourly_list_cleaned = clean_and_prepare_hourly(hourly_list)
+hourly_france_cleaned = clean_and_prepare_hourly(hourly_france)
+hourly_belgique_cleaned = clean_and_prepare_hourly(hourly_belgique)
+
+# Combiner toutes les données dans une seule liste
+all_hourly = hourly_list_cleaned + hourly_france_cleaned + hourly_belgique_cleaned
+
+print(f"✓ Total mesures horaires à insérer : {len(all_hourly)}")
+
+# INSERTION DANS MONGODB
+
+# CONFIGURATION  CONNEXION MONGODB
+
+MONGO_URI = "mongodb://localhost:27017/"
+DB_NAME  = "meteo_db"
+
+# CONNEXION MONGO
+
+def get_mongodb_collections():
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    print("Connexion à MongoDB établie.")
+    return db["stations"], db["metadata"], db["hourly"]
+
+
+
+# Collections
+stations_col, metadata_col, hourly_col = get_mongodb_collections()
+
+
+# Vider la collection :  en situation réel je ne le ferai pas
+stations_col.delete_many({})  # supprime toutes les stations
+hourly_col.delete_many({})    # supprime toutes les mesures horaires
+metadata_col.delete_many({})
+
+print("✓ Collections vidées")
+
+
+# ----------------------------
+# Index uniques pour éviter doublons
+# ----------------------------
+stations_col.create_index("id", unique=True)
+hourly_col.create_index([("id_station", 1), ("dh_utc", 1)], unique=True)
+# metadata : pas d'index unique nécessaire ici (un seul document)
+
+# ----------------------------
+# Insertion stations
+# ----------------------------
+if stations:
+    result = stations_col.insert_many(stations)
+    print(f"✓ {len(result.inserted_ids)} stations insérées")
+
+# ----------------------------
+# Insertion metadata
+# ----------------------------
+if metadata:
+    # metadata est un dict, on le transforme en liste de dict avec _id si nécessaire
+    metadata_doc = metadata.copy()  # pour ne pas modifier l'original
+    metadata_col.insert_one(metadata_doc)
+    print(f"✓ Metadata insérée")
+
+# ----------------------------
+# Insertion hourly
+# ----------------------------
+if all_hourly:
+    result = hourly_col.insert_many(all_hourly)
+    print(f"✓ {len(result.inserted_ids)} mesures horaires insérées")
+
+
+
+'''
+si je veux dans une seule collection  : 
+combined_list = []
+
+for h in hourly_list:
+    # trouver la station correspondante
+    station = next((s for s in stations if s["id"] == h["id_station"]), {})
+    
+    # construire un document unique
+    doc = {
+        "id_station": h["id_station"],
+        "dh_utc": h["dh_utc"],
+        "temperature": h.get("temperature"),
+        "pression": h.get("pression"),
+        "humidite": h.get("humidite"),
+        "point_de_rosee": h.get("point_de_rosee"),
+        "visibilite": h.get("visibilite"),
+        "vent_moyen": h.get("vent_moyen"),
+        "vent_rafales": h.get("vent_rafales"),
+        "vent_direction": h.get("vent_direction"),
+        "pluie_3h": h.get("pluie_3h"),
+        "pluie_1h": h.get("pluie_1h"),
+        "neige_au_sol": h.get("neige_au_sol"),
+        "nebulosite": h.get("nebulosite"),
+        "temps_omm": h.get("temps_omm"),
+        # infos station imbriquées
+        "station": station,
+        # metadata complet imbriqué
+        "metadata": metadata
+    }
+    combined_list.append(doc)
+
+'''
