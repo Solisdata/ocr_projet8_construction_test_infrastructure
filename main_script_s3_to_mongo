@@ -55,21 +55,6 @@ df1_infoclimat = load_s3_jsonl(BUCKET_NAME, df1_infoclimat_key)
 df2_amateur_france = load_s3_jsonl(BUCKET_NAME, df2_amateur_france_key)
 df3_amateur_belgique = load_s3_jsonl(BUCKET_NAME, df3_amateur_belgique_key)
 
-SEARCH = "011024"
-
-def search_json(obj):
-    if isinstance(obj, dict):
-        return any(search_json(v) for v in obj.values())
-    elif isinstance(obj, list):
-        return any(search_json(i) for i in obj)
-    else:
-        return SEARCH in str(obj)
-
-if search_json(df1_infoclimat):
-    print(f"✅ '{SEARCH}' trouvé dans df1_infoclimat")
-else:
-    print(f"❌ '{SEARCH}' non trouvé dans df1_infoclimat")
-
 
 #j'extrait les la partie qui m'interessent qui se trouvent dans airbyte_date
 def extract_airbyte_data(rows, source_name=""):
@@ -267,13 +252,13 @@ def clean_and_prepare_hourly(hourly_list):
 
         # Vérification température
         if temperature_value is None or -50 <= temperature_value <= 50:
-            cleaned_list.append(h)  # garder la ligne même si temp manquante
+            cleaned_list.append(h)  # garder la ligne même si temps manquante
         else:
-            print(f"⚠️ Temperature aberrante supprimée : {h['id_station']} {h.get('dh_utc')} = {temperature_value}")
+            print(f" Temperature aberrante supprimée : {h['id_station']} {h.get('dh_utc')} = {temperature_value}")
 
     print(f"\nCleaning valeurs aberrantes")
-    print(f"✓ Lignes initiales : {len(hourly_list)}")
-    print(f"✓ Lignes après cleaning : {len(cleaned_list)}")
+    print(f" Lignes initiales : {len(hourly_list)}")
+    print(f" Lignes après cleaning : {len(cleaned_list)}")
 
     return cleaned_list
 
@@ -285,8 +270,11 @@ hourly_belgique_cleaned = clean_and_prepare_hourly(hourly_belgique)
 # Combiner toutes les données dans une seule liste
 all_hourly = hourly_list_cleaned + hourly_france_cleaned + hourly_belgique_cleaned
 
-print(f"✓ Total mesures horaires à insérer : {len(all_hourly)}")
+print(f"Total mesures horaires à insérer : {len(all_hourly)}")
 
+
+
+# LOAD
 # INSERTION DANS MONGODB
 
 # CONFIGURATION  CONNEXION MONGODB
@@ -303,12 +291,11 @@ def get_mongodb_collections():
     return db["stations"], db["metadata"], db["hourly"]
 
 
-
 # Collections
 stations_col, metadata_col, hourly_col = get_mongodb_collections()
 
 
-# Vider la collection :  en situation réel je ne le ferai pas
+# Vider la collection :  
 stations_col.delete_many({})  # supprime toutes les stations
 hourly_col.delete_many({})    # supprime toutes les mesures horaires
 metadata_col.delete_many({})
@@ -316,68 +303,32 @@ metadata_col.delete_many({})
 print("\n✓ Collections vidées")
 
 
-# ----------------------------
-# Index uniques pour éviter doublons
-# ----------------------------
+
+# Index uniques 
+
 stations_col.create_index("id", unique=True)
 hourly_col.create_index([("id_station", 1), ("dh_utc", 1)], unique=True)
-# metadata : pas d'index unique nécessaire ici (un seul document)
 
-# ----------------------------
+
+
 # Insertion stations
-# ----------------------------
+
 if stations:
     result = stations_col.insert_many(stations)
     print(f"\n✓ {len(result.inserted_ids)} stations insérées")
 
-# ----------------------------
+
 # Insertion metadata
-# ----------------------------
+
 if metadata:
-    # metadata est un dict, on le transforme en liste de dict avec _id si nécessaire
-    metadata_doc = metadata.copy()  # pour ne pas modifier l'original
+    metadata_doc = metadata.copy()  
     metadata_col.insert_one(metadata_doc)
     print(f"✓ Metadata insérée")
 
-# ----------------------------
+
 # Insertion hourly
-# ----------------------------
+
 if all_hourly:
     result = hourly_col.insert_many(all_hourly)
     print(f"✓ {len(result.inserted_ids)} mesures horaires insérées")
 
-
-
-'''
-si je veux dans une seule collection  : 
-combined_list = []
-
-for h in hourly_list:
-    # trouver la station correspondante
-    station = next((s for s in stations if s["id"] == h["id_station"]), {})
-    
-    # construire un document unique
-    doc = {
-        "id_station": h["id_station"],
-        "dh_utc": h["dh_utc"],
-        "temperature": h.get("temperature"),
-        "pression": h.get("pression"),
-        "humidite": h.get("humidite"),
-        "point_de_rosee": h.get("point_de_rosee"),
-        "visibilite": h.get("visibilite"),
-        "vent_moyen": h.get("vent_moyen"),
-        "vent_rafales": h.get("vent_rafales"),
-        "vent_direction": h.get("vent_direction"),
-        "pluie_3h": h.get("pluie_3h"),
-        "pluie_1h": h.get("pluie_1h"),
-        "neige_au_sol": h.get("neige_au_sol"),
-        "nebulosite": h.get("nebulosite"),
-        "temps_omm": h.get("temps_omm"),
-        # infos station imbriquées
-        "station": station,
-        # metadata complet imbriqué
-        "metadata": metadata
-    }
-    combined_list.append(doc)
-
-'''
