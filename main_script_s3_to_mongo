@@ -275,60 +275,72 @@ print(f"Total mesures horaires à insérer : {len(all_hourly)}")
 
 
 # LOAD
+# =========================
 # INSERTION DANS MONGODB
+# =========================
 
-# CONFIGURATION  CONNEXION MONGODB
+from pymongo import MongoClient
+from collections import defaultdict
 
 MONGO_URI = "mongodb://localhost:27017/"
 DB_NAME  = "meteo_db"
 
-# CONNEXION MONGO
-
-def get_mongodb_collections():
+def get_mongodb_collection():
     client = MongoClient(MONGO_URI)
     db = client[DB_NAME]
     print("\nConnexion à MongoDB établie.")
-    return db["stations"], db["metadata"], db["hourly"]
+    return db["stations_hourly"]
 
+# Collection unique
+stations_col = get_mongodb_collection()
 
-# Collections
-stations_col, metadata_col, hourly_col = get_mongodb_collections()
+# Vider la collection (dev uniquement)
+stations_col.delete_many({})
+print("✓ Collection stations_hourly vidée")
 
+# ----------------------------
+# REGROUPEMENT DES HOURLY PAR STATION
+# ----------------------------
+hourly_by_station = defaultdict(list)
 
-# Vider la collection :  
-stations_col.delete_many({})  # supprime toutes les stations
-hourly_col.delete_many({})    # supprime toutes les mesures horaires
-metadata_col.delete_many({})
+for h in all_hourly:
+    hourly_by_station[h.get("id_station")].append({
+        "dh_utc": h.get("dh_utc"),
+        "temperature": h.get("temperature"),
+        "pression": h.get("pression"),
+        "humidite": h.get("humidite"),
+        "point_de_rosee": h.get("point_de_rosee"),
+        "visibilite": h.get("visibilite"),
+        "vent_moyen": h.get("vent_moyen"),
+        "vent_rafales": h.get("vent_rafales"),
+        "vent_direction": h.get("vent_direction"),
+        "pluie_1h": h.get("pluie_1h"),
+        "pluie_3h": h.get("pluie_3h"),
+        "neige_au_sol": h.get("neige_au_sol"),
+        "nebulosite": h.get("nebulosite"),
+        "temps_omm": h.get("temps_omm")
+    })
 
-print("\n✓ Collections vidées")
+print("✓ Hourly regroupées par station")
 
+# ----------------------------
+# CONSTRUCTION DES DOCUMENTS STATION
+# ----------------------------
+documents = []
 
+for station in stations:
+    doc = {
+        **station,                  # infos station
+        "metadata": metadata,       # metadata snapshot
+        "hourly": hourly_by_station.get(station.get("id"), [])
+    }
+    documents.append(doc)
 
-# Index uniques 
+print(f"✓ Documents stations prêts : {len(documents)}")
 
-stations_col.create_index("id", unique=True)
-hourly_col.create_index([("id_station", 1), ("dh_utc", 1)], unique=True)
-
-
-
-# Insertion stations
-
-if stations:
-    result = stations_col.insert_many(stations)
-    print(f"\n✓ {len(result.inserted_ids)} stations insérées")
-
-
-# Insertion metadata
-
-if metadata:
-    metadata_doc = metadata.copy()  
-    metadata_col.insert_one(metadata_doc)
-    print(f"✓ Metadata insérée")
-
-
-# Insertion hourly
-
-if all_hourly:
-    result = hourly_col.insert_many(all_hourly)
-    print(f"✓ {len(result.inserted_ids)} mesures horaires insérées")
-
+# ----------------------------
+# INSERTION
+# ----------------------------
+if documents:
+    result = stations_col.insert_many(documents)
+    print(f"✓ {len(result.inserted_ids)} stations insérées avec hourly imbriquées")
