@@ -211,7 +211,7 @@ def clean_and_convert_hourly(hourly_list):
             print(f"⚠ Température aberrante supprimée : {converted['id_station']} "
                   f"{converted['dh_utc']} = {temp}°C")
     
-    print(f"\n🧹 CLEANING + CONVERSION")
+    print(f"\n CLEANING + CONVERSION")
     print(f"  Lignes initiales : {len(hourly_list)}")
     print(f"  Lignes après cleaning : {len(cleaned_list)}")
     
@@ -315,25 +315,68 @@ def main():
     hourly_belgique = normalize_hourly_amateur(meteo_belgique_amateur, "IICHTE19")
 
     # Suppression des doublons dans hourly_list
-    hourly_list = remove_duplicates(hourly_list, ["id_station", "dh_utc"])
-    hourly_france = remove_duplicates(hourly_france, ["id_station", "dh_utc"])
-    hourly_belgique = remove_duplicates(hourly_belgique, ["id_station", "dh_utc"])
+    hourly_list_without_duplicates = remove_duplicates(hourly_list, ["id_station", "dh_utc"])
+    hourly_france_without_duplicates = remove_duplicates(hourly_france, ["id_station", "dh_utc"])
+    hourly_belgique_without_duplicates = remove_duplicates(hourly_belgique, ["id_station", "dh_utc"])
 
     # Pour les stations
     stations = remove_duplicates(stations, ["id"])
 
-    hourly_list_cleaned = clean_and_convert_hourly(hourly_list)
-    hourly_france_cleaned = clean_and_convert_hourly(hourly_france)
-    hourly_belgique_cleaned = clean_and_convert_hourly(hourly_belgique)
+    hourly_list_cleaned = clean_and_convert_hourly(hourly_list_without_duplicates)
+    hourly_france_cleaned = clean_and_convert_hourly(hourly_france_without_duplicates)
+    hourly_belgique_cleaned = clean_and_convert_hourly(hourly_belgique_without_duplicates)
 
     # Combiner toutes les données dans une seule liste
     all_hourly = hourly_list_cleaned + hourly_france_cleaned + hourly_belgique_cleaned
 
     print(f"Total mesures horaires à insérer : {len(all_hourly)}")
 
+    print(f"\nTaux d'erreur :")
+
     # ----------------------------
+    # Taux de doublons
+    # ----------------------------
+    total_before = len(hourly_list) + len(hourly_france) + len(hourly_belgique)
+    total_after_duplicates_removed = (
+        len(hourly_list_without_duplicates) +
+        len(hourly_france_without_duplicates) +
+        len(hourly_belgique_without_duplicates)
+    )
+    duplicates_rate = (total_before - total_after_duplicates_removed) / total_before * 100
+    print(f"Doublons supprimés : {duplicates_rate:.2f}%")
+
+    # ----------------------------
+    # TAUX D'ERREUR PAR CHAMP
+    # ----------------------------
+    fields_to_check = [
+        "temperature", "pression", "humidite", "point_de_rosee",
+        "visibilite", "vent_moyen", "vent_rafales", "vent_direction",
+        "pluie_1h", "pluie_3h", "neige_au_sol", "nebulosite", "dh_utc"
+    ]
+
+    total_values = 0
+    invalid_count = 0
+    field_errors = {field: 0 for field in fields_to_check}
+
+    for h in all_hourly:
+        for field in fields_to_check:
+            total_values += 1
+            if h.get(field) is None:
+                invalid_count += 1
+                field_errors[field] += 1
+
+    print("\nTaux d'erreur par champ")
+    for field, count in field_errors.items():
+        taux = (count / len(all_hourly)) * 100
+        print(f"{field}: {count} erreurs sur {len(all_hourly)} lignes ({taux:.2f}%)")
+
+    taux_global = (invalid_count / total_values) * 100
+    print(f"\n✓ Taux d'erreur global toutes valeurs confondues : {taux_global:.2f}% "
+          f"({invalid_count}/{total_values} valeurs invalides)")
+
+
     # REGROUPEMENT DES HOURLY PAR STATION
-    # ----------------------------
+
     hourly_by_station = defaultdict(list)
 
     for h in all_hourly:
@@ -342,9 +385,9 @@ def main():
 
     print("✓ Hourly regroupées par station")
 
-    # ----------------------------
+
     # CONSTRUCTION DES DOCUMENTS STATION
-    # ----------------------------
+
     documents = []
 
     for station in stations:
