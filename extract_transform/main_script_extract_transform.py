@@ -110,9 +110,12 @@ def normalize_hourly_amateur(df, station_id):
         for src_key, target_key in key_map.items():
             val = row.get(src_key)
             if target_key == "dh_utc":
-                # convertit Time en ISO string (HH:MM:SS)
                 try:
-                    doc[target_key] = datetime.strptime(val, "%H:%M:%S").isoformat()
+                    # Infoclimat: "YYYY-MM-DD HH:MM:SS", Amateur: "M/D/YYYY H:M:S"
+                    if "/" in val:  # amateur
+                        doc[target_key] = datetime.strptime(val, "%m/%d/%Y %H:%M:%S").isoformat()
+                    else:           # infoclimat
+                        doc[target_key] = datetime.strptime(val, "%Y-%m-%d %H:%M:%S").isoformat()
                 except Exception:
                     doc[target_key] = None
             else:
@@ -131,17 +134,16 @@ def normalize_hourly_amateur(df, station_id):
 #Modifications des données 
 
 def remove_duplicates(records, unique_fields):
-    # Crée un dictionnaire avec pour clé le tuple des champs uniques
-    cleaned_dict = {tuple(record[f] for f in unique_fields): record for record in records}
-    
-    # Convertit les valeurs du dictionnaire en liste
+    cleaned_dict = {}
+    for record in records:
+        key = tuple(record[f] if not isinstance(record[f], datetime) else record[f].isoformat() for f in unique_fields)
+        cleaned_dict[key] = record
+
     cleaned_list = list(cleaned_dict.values())
-    
     print(f"\nRemove duplicate")
     print(f"✓ Total lignes avant suppression : {len(records)}")
     print(f"✓ Total lignes après suppression : {len(cleaned_list)}")
     print(f"✓ Doublons supprimés : {len(records) - len(cleaned_list)}")
-    
     return cleaned_list
 
 
@@ -238,8 +240,8 @@ def main():
 
     BUCKET_NAME = "ocr-projet8"
     df1_infoclimat_prefix = "raw_meteo_data/ocr_infoclimat/"
-    df2_amateur_france = "raw_meteo_data/meteo_station_amateur_france/"
-    df3_amateur_belgique = "raw_meteo_data/meteo_station_amateur_belgique/"
+    df2_amateur_france = "raw_meteo_data/amateur_fr/"
+    df3_amateur_belgique = "raw_meteo_data/amateur_bel/"
 
     df1_infoclimat_key = get_latest_s3_key(BUCKET_NAME, df1_infoclimat_prefix)
     df2_amateur_france_key = get_latest_s3_key(BUCKET_NAME, df2_amateur_france)
