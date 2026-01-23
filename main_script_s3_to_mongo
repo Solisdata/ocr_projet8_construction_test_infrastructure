@@ -6,11 +6,10 @@ from pymongo import MongoClient
 from datetime import datetime
 
 
-
-# CONFIGURATION CONNEXION SOURCE S3
+# EXTRACT CONFIGURATION CONNEXION SOURCE S3
 
 BUCKET_NAME = "ocr-projet8"
-df1_infoclimat_prefix = "raw_meteo_data/meteo_dataset/"
+df1_infoclimat_prefix = "raw_meteo_data/ocr_infoclimat/"
 df2_amateur_france = "raw_meteo_data/meteo_station_amateur_france/"
 df3_amateur_belgique = "raw_meteo_data/meteo_station_amateur_belgique/"
 
@@ -55,6 +54,21 @@ def load_s3_jsonl(bucket_name, key):
 df1_infoclimat = load_s3_jsonl(BUCKET_NAME, df1_infoclimat_key)
 df2_amateur_france = load_s3_jsonl(BUCKET_NAME, df2_amateur_france_key)
 df3_amateur_belgique = load_s3_jsonl(BUCKET_NAME, df3_amateur_belgique_key)
+
+SEARCH = "011024"
+
+def search_json(obj):
+    if isinstance(obj, dict):
+        return any(search_json(v) for v in obj.values())
+    elif isinstance(obj, list):
+        return any(search_json(i) for i in obj)
+    else:
+        return SEARCH in str(obj)
+
+if search_json(df1_infoclimat):
+    print(f"✅ '{SEARCH}' trouvé dans df1_infoclimat")
+else:
+    print(f"❌ '{SEARCH}' non trouvé dans df1_infoclimat")
 
 
 #j'extrait les la partie qui m'interessent qui se trouvent dans airbyte_date
@@ -133,9 +147,6 @@ stations.append({
 })
 
 ##nettoyage de Hourly
-
-
-
 
 ## NORMALISATION de Hourly
 from datetime import datetime
@@ -222,6 +233,7 @@ def remove_duplicates(records, unique_fields):
     # Convertit les valeurs du dictionnaire en liste
     cleaned_list = list(cleaned_dict.values())
     
+    print(f"\nRemove duplicate")
     print(f"✓ Total lignes avant suppression : {len(records)}")
     print(f"✓ Total lignes après suppression : {len(cleaned_list)}")
     print(f"✓ Doublons supprimés : {len(records) - len(cleaned_list)}")
@@ -259,6 +271,7 @@ def clean_and_prepare_hourly(hourly_list):
         else:
             print(f"⚠️ Temperature aberrante supprimée : {h['id_station']} {h.get('dh_utc')} = {temperature_value}")
 
+    print(f"\nCleaning valeurs aberrantes")
     print(f"✓ Lignes initiales : {len(hourly_list)}")
     print(f"✓ Lignes après cleaning : {len(cleaned_list)}")
 
@@ -286,7 +299,7 @@ DB_NAME  = "meteo_db"
 def get_mongodb_collections():
     client = MongoClient(MONGO_URI)
     db = client[DB_NAME]
-    print("Connexion à MongoDB établie.")
+    print("\nConnexion à MongoDB établie.")
     return db["stations"], db["metadata"], db["hourly"]
 
 
@@ -300,7 +313,7 @@ stations_col.delete_many({})  # supprime toutes les stations
 hourly_col.delete_many({})    # supprime toutes les mesures horaires
 metadata_col.delete_many({})
 
-print("✓ Collections vidées")
+print("\n✓ Collections vidées")
 
 
 # ----------------------------
@@ -315,7 +328,7 @@ hourly_col.create_index([("id_station", 1), ("dh_utc", 1)], unique=True)
 # ----------------------------
 if stations:
     result = stations_col.insert_many(stations)
-    print(f"✓ {len(result.inserted_ids)} stations insérées")
+    print(f"\n✓ {len(result.inserted_ids)} stations insérées")
 
 # ----------------------------
 # Insertion metadata
