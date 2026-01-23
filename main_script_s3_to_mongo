@@ -235,37 +235,80 @@ stations = remove_duplicates(stations, ["id"])
 
 
 #pour les données horaires 
-from datetime import datetime
 
-def clean_and_prepare_hourly(hourly_list):
+# ========== AJOUT : FONCTIONS DE PARSING ==========
+def parse_float(value):
+    """Convertit en float, retourne None si impossible"""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+def parse_int(value):
+    """Convertit en int, retourne None si impossible"""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+def parse_datetime(value):
+    """Convertit string en datetime MongoDB"""
+    if not value:
+        return None
+    try:
+        # Format de tes données : "2024-10-05 00:00:00"
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+def clean_and_convert_hourly(hourly_list):
     """
-    # récupérer la température, None si pas de valeur ou mauvaise : faire pour les autres valeurs
-    
+    Nettoie, convertit les types ET filtre les valeurs aberrantes en UNE SEULE PASSE
     """
     cleaned_list = []
+    
     for h in hourly_list:
-        # récupérer la température, None si pas de valeur ou mauvaise
-        try:
-            temperature_value = float(h.get("temperature", None))
-        except (ValueError, TypeError):
-            temperature_value = None
-
-        # Vérification température
-        if temperature_value is None or -50 <= temperature_value <= 50:
-            cleaned_list.append(h)  # garder la ligne même si temps manquante
+        # Conversion de tous les champs en une fois
+        converted = {
+            "id_station": h.get("id_station"),
+            "dh_utc": parse_datetime(h.get("dh_utc")),
+            "temperature": parse_float(h.get("temperature")),
+            "pression": parse_float(h.get("pression")),
+            "humidite": parse_int(h.get("humidite")),
+            "point_de_rosee": parse_float(h.get("point_de_rosee")),
+            "visibilite": parse_float(h.get("visibilite")),
+            "vent_moyen": parse_float(h.get("vent_moyen")),
+            "vent_rafales": parse_float(h.get("vent_rafales")),
+            "vent_direction": parse_int(h.get("vent_direction")),
+            "pluie_1h": parse_float(h.get("pluie_1h")),
+            "pluie_3h": parse_float(h.get("pluie_3h")),
+            "neige_au_sol": parse_float(h.get("neige_au_sol")),
+            "nebulosite": parse_int(h.get("nebulosite")),
+            "temps_omm": h.get("temps_omm")
+        }
+        
+        # Vérification des valeurs aberrantes (température)
+        temp = converted["temperature"]
+        if temp is None or -50 <= temp <= 50:
+            cleaned_list.append(converted)
         else:
-            print(f" Temperature aberrante supprimée : {h['id_station']} {h.get('dh_utc')} = {temperature_value}")
-
-    print(f"\nCleaning valeurs aberrantes")
-    print(f" Lignes initiales : {len(hourly_list)}")
-    print(f" Lignes après cleaning : {len(cleaned_list)}")
-
+            print(f"⚠ Température aberrante supprimée : {converted['id_station']} "
+                  f"{converted['dh_utc']} = {temp}°C")
+    
+    print(f"\n🧹 CLEANING + CONVERSION")
+    print(f"  Lignes initiales : {len(hourly_list)}")
+    print(f"  Lignes après cleaning : {len(cleaned_list)}")
+    
     return cleaned_list
 
 
-hourly_list_cleaned = clean_and_prepare_hourly(hourly_list)
-hourly_france_cleaned = clean_and_prepare_hourly(hourly_france)
-hourly_belgique_cleaned = clean_and_prepare_hourly(hourly_belgique)
+hourly_list_cleaned = clean_and_convert_hourly(hourly_list)
+hourly_france_cleaned = clean_and_convert_hourly(hourly_france)
+hourly_belgique_cleaned = clean_and_convert_hourly(hourly_belgique)
 
 # Combiner toutes les données dans une seule liste
 all_hourly = hourly_list_cleaned + hourly_france_cleaned + hourly_belgique_cleaned
@@ -273,6 +316,8 @@ all_hourly = hourly_list_cleaned + hourly_france_cleaned + hourly_belgique_clean
 print(f"Total mesures horaires à insérer : {len(all_hourly)}")
 
 
+
+# ================================================
 
 # LOAD
 # =========================
@@ -304,22 +349,8 @@ print("✓ Collection stations_hourly vidée")
 hourly_by_station = defaultdict(list)
 
 for h in all_hourly:
-    hourly_by_station[h.get("id_station")].append({
-        "dh_utc": h.get("dh_utc"),
-        "temperature": h.get("temperature"),
-        "pression": h.get("pression"),
-        "humidite": h.get("humidite"),
-        "point_de_rosee": h.get("point_de_rosee"),
-        "visibilite": h.get("visibilite"),
-        "vent_moyen": h.get("vent_moyen"),
-        "vent_rafales": h.get("vent_rafales"),
-        "vent_direction": h.get("vent_direction"),
-        "pluie_1h": h.get("pluie_1h"),
-        "pluie_3h": h.get("pluie_3h"),
-        "neige_au_sol": h.get("neige_au_sol"),
-        "nebulosite": h.get("nebulosite"),
-        "temps_omm": h.get("temps_omm")
-    })
+    hourly_data = {k: v for k, v in h.items() if k != "id_station"}
+    hourly_by_station[h["id_station"]].append(hourly_data)
 
 print("✓ Hourly regroupées par station")
 
@@ -344,3 +375,15 @@ print(f"✓ Documents stations prêts : {len(documents)}")
 if documents:
     result = stations_col.insert_many(documents)
     print(f"✓ {len(result.inserted_ids)} stations insérées avec hourly imbriquées")
+
+
+# AJOUT : CRÉATION D'INDEX 
+# Index unique sur l'ID station
+stations_col.create_index("id", unique=True)
+print("✓ Index unique créé sur 'id'")
+
+# Index sur les dates pour requêtes temporelles
+stations_col.create_index("hourly.dh_utc")
+print("✓ Index créé sur 'hourly.dh_utc'")
+
+
