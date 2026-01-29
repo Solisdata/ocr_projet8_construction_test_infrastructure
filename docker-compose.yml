@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  etl:
+    build: .
+    container_name: etl_pipeline
+    command: python -m orchestration.run_pipeline
+    volumes:
+      - ./logs:/app/logs         
+    depends_on:
+      - mongo
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - MONGO_URI=${MONGO_URI}
+
+  mongo:
+    image: mongo:6.0
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
