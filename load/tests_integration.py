@@ -1,8 +1,12 @@
 import time
 from pymongo import MongoClient
+import os
+from dotenv import load_dotenv  
 
-MONGO_URI = "mongodb://localhost:27017/"  # Docker local
-DB_NAME = "meteo_db"
+load_dotenv()
+
+MONGO_URI = os.environ.get("MONGO_URI")
+DB_NAME = os.environ.get("MONGO_DB", "meteo_db")
 COLLECTION_NAME = "stations_hourly"
 
 client = MongoClient(MONGO_URI)

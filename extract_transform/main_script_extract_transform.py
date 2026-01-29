@@ -6,13 +6,27 @@ from pymongo import MongoClient
 from datetime import datetime
 from collections import defaultdict
 import json
+import os
+from dotenv import load_dotenv
 
 
+load_dotenv()
+
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION")
+
+def get_s3_client():
+    return boto3.client(
+        "s3",
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_DEFAULT_REGION
+    )
 
 # fonction pour prendre le dernier fichier chargé dans le bucket
 def get_latest_s3_key(bucket_name, prefix):
-    s3 = boto3.client("s3")
-
+    s3 = get_s3_client()
     response = s3.list_objects_v2(
         Bucket=bucket_name,
         Prefix=prefix
@@ -26,13 +40,13 @@ def get_latest_s3_key(bucket_name, prefix):
         key=lambda x: x["LastModified"]
     )
 
-    print(f"✓ Dernier fichier détecté : {latest_object['Key']}")
+    print(f" Dernier fichier détecté : {latest_object['Key']}")
     return latest_object["Key"]
 
 
 # je charge le fichier
 def load_s3_jsonl(bucket_name, key):
-    s3 = boto3.client("s3")
+    s3 = get_s3_client()
     response = s3.get_object(Bucket=bucket_name, Key=key)
     lines = response["Body"].read().decode("utf-8").splitlines()
 
@@ -124,7 +138,7 @@ def normalize_hourly_amateur(df, station_id):
         df_normalized.append(doc)
 
     print(f"\nNORMALISATION [{station_id}]")
-    print(f"✓ {len(df_normalized)} lignes normalisées")
+    print(f" {len(df_normalized)} lignes normalisées")
     print("Clés :", df_normalized[0].keys())
     print("Extrait :", df_normalized[0])  
 
@@ -141,9 +155,9 @@ def remove_duplicates(records, unique_fields):
 
     cleaned_list = list(cleaned_dict.values())
     print(f"\nRemove duplicate")
-    print(f"✓ Total lignes avant suppression : {len(records)}")
-    print(f"✓ Total lignes après suppression : {len(cleaned_list)}")
-    print(f"✓ Doublons supprimés : {len(records) - len(cleaned_list)}")
+    print(f" Total lignes avant suppression : {len(records)}")
+    print(f" Total lignes après suppression : {len(cleaned_list)}")
+    print(f" Doublons supprimés : {len(records) - len(cleaned_list)}")
     return cleaned_list
 
 
@@ -280,9 +294,9 @@ def main():
 
     print("\n CLE INFOCLIMAT")
     print("clé stations:", stations[0].keys())
-    print(f"✓ Nombre de lignes stations chargées : {len(stations)}") 
+    print(f" Nombre de lignes stations chargées : {len(stations)}") 
     print("clé hourly:", hourly_list[0].keys())
-    print(f"✓ Nombre de lignes horaires chargées : {len(hourly_list)}") 
+    print(f" Nombre de lignes horaires chargées : {len(hourly_list)}") 
 
 
     #STATIONS AMATEURS
@@ -373,7 +387,7 @@ def main():
         print(f"{field}: {count} erreurs sur {len(all_hourly)} lignes ({taux:.2f}%)")
 
     taux_global = (invalid_count / total_values) * 100
-    print(f"\n✓ Taux d'erreur global toutes valeurs confondues : {taux_global:.2f}% "
+    print(f"\n Taux d'erreur global toutes valeurs confondues : {taux_global:.2f}% "
           f"({invalid_count}/{total_values} valeurs invalides)")
 
 
@@ -385,7 +399,7 @@ def main():
         hourly_data = {k: v for k, v in h.items() if k != "id_station"}
         hourly_by_station[h["id_station"]].append(hourly_data)
 
-    print("✓ Hourly regroupées par station")
+    print(" Hourly regroupées par station")
 
 
     # CONSTRUCTION DES DOCUMENTS STATION
@@ -400,14 +414,14 @@ def main():
         }
         documents.append(doc)
 
-    print(f"✓ Documents stations prêts : {len(documents)}")
+    print(f" Documents stations prêts : {len(documents)}")
     # Conversion + sauvegarde
     documents_serializable = make_serializable(documents)
 
     with open("data/stations_transformed.json", "w", encoding="utf-8") as f:
         json.dump(documents_serializable, f, ensure_ascii=False, indent=2)
 
-    print(f"✓ JSON sauvegardé avec {len(documents_serializable)} documents")
+    print(f" JSON sauvegardé avec {len(documents_serializable)} documents")
 
 if __name__ == "__main__":
     main()

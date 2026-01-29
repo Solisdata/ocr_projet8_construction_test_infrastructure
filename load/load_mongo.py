@@ -6,14 +6,35 @@
 from pymongo import MongoClient
 from collections import defaultdict
 import json
+import os
+from dotenv import load_dotenv  
+
+load_dotenv()
+
+print("MONGO_URI:", os.environ.get("MONGO_URI"))
 
 with open("data/stations_transformed.json", "r", encoding="utf-8") as f:
     documents = json.load(f)
 
 print(f"OK : {len(documents)} documents charges depuis JSON")
 
-MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME  = "meteo_db"
+
+def get_mongo_uri():
+    # 1. On vérifie si on est dans Docker
+    is_docker = os.path.exists('/.dockerenv')
+    
+    # 2. On récupère la valeur du .env
+    env_uri = os.environ.get("MONGO_URI")
+    
+    if is_docker:
+        # Dans Docker, on veut "mongodb://mongo:27017/"
+        return env_uri if env_uri else "mongodb://mongo:27017/"
+    else:
+        # En local, on FORCE localhost, même si le .env dit "mongo"
+        return "mongodb://localhost:27017/"
+
+MONGO_URI = get_mongo_uri()
+DB_NAME = "meteo_db"
 
 def get_mongodb_collection():
     client = MongoClient(MONGO_URI)
