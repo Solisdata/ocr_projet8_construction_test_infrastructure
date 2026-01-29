@@ -1,8 +1,12 @@
 import time
 from pymongo import MongoClient
+import os
+from dotenv import load_dotenv  
 
-MONGO_URI = "mongodb://localhost:27017/"  # Docker local
-DB_NAME = "meteo_db"
+load_dotenv()
+
+MONGO_URI = os.environ.get("MONGO_URI")
+DB_NAME = os.environ.get("MONGO_DB", "meteo_db")
 COLLECTION_NAME = "stations_hourly"
 
 client = MongoClient(MONGO_URI)
@@ -23,4 +27,4 @@ measure_query_time(lambda: collection.find({}, {"id": 1}), "Toutes les stations"
 measure_query_time(lambda: collection.find({"id": "ILAMAD25"}, {"hourly": 1}), "Hourly station ILAMAD25")
 
 # 3. Filtrage par date (ex: dernière mesure)
-measure_query_time(lambda: collection.find({"hourly.dh_utc": {"$gte": "2026-01-23T12:00:00"}}), "Filtre par date")
+measure_query_time(lambda: collection.find({"hourly.dh_utc": {"$gte": "2024-01-23T12:00:00"}}), "Filtre par date")
