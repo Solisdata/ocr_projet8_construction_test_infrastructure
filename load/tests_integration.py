@@ -23,4 +23,4 @@ measure_query_time(lambda: collection.find({}, {"id": 1}), "Toutes les stations"
 measure_query_time(lambda: collection.find({"id": "ILAMAD25"}, {"hourly": 1}), "Hourly station ILAMAD25")
 
 # 3. Filtrage par date (ex: dernière mesure)
-measure_query_time(lambda: collection.find({"hourly.dh_utc": {"$gte": "2026-01-23T12:00:00"}}), "Filtre par date")
+measure_query_time(lambda: collection.find({"hourly.dh_utc": {"$gte": "2024-01-23T12:00:00"}}), "Filtre par date")

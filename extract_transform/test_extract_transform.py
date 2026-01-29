@@ -60,7 +60,7 @@ def test_normalize_hourly_amateur():
             "Gust": "15 mph",
             "Precip. Rate.": "0.1 in",
             "Precip. Accum.": "0.2 in",
-            "Time": "14:30:00"
+            "Time": "1/10/2024 0:04:00"
         }
     ]
     result = normalize_hourly_amateur(sample, "TEST01")
@@ -76,7 +76,7 @@ def test_normalize_hourly_amateur():
     assert abs(r["vent_rafales"] - 6.7056) < 0.01
     assert abs(r["pluie_1h"] - 2.54) < 0.01
     assert abs(r["pluie_3h"] - 5.08) < 0.01
-    assert r["dh_utc"] == "1900-01-01T14:30:00"
+    assert r["dh_utc"] == "2024-01-10T00:04:00"
 
 # Test clean_and_convert_hourly
 

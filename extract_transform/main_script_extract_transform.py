@@ -241,7 +241,7 @@ def main():
     BUCKET_NAME = "ocr-projet8"
     df1_infoclimat_prefix = "raw_meteo_data/ocr_infoclimat/"
     df2_amateur_france = "raw_meteo_data/amateur_fr/"
-    df3_amateur_belgique = "raw_meteo_data/amateur_bel/"
+    df3_amateur_belgique = "raw_meteo_data/amateur_bel/" 
 
     df1_infoclimat_key = get_latest_s3_key(BUCKET_NAME, df1_infoclimat_prefix)
     df2_amateur_france_key = get_latest_s3_key(BUCKET_NAME, df2_amateur_france)
