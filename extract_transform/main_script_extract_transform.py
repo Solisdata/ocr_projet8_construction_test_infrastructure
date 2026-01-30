@@ -68,6 +68,25 @@ def extract_airbyte_data(rows, source_name=""):
 
     return meteo_data
 
+
+def analyze_missing_values(df, source_name):
+    """Compte les valeurs manquantes dans les données brutes"""
+    print(f"\n=== {source_name} ===")
+    print(f"Total lignes : {len(df)}")
+    
+    if not df:
+        return
+    
+    # Prendre toutes les clés du premier élément
+    keys = df[0].keys()
+    
+    print(f"\nValeurs manquantes :")
+    for key in keys:
+        null_count = sum(1 for row in df if not row.get(key))
+        if null_count > 0:
+            taux = (null_count / len(df)) * 100
+            print(f"  {key}: {null_count} ({taux:.1f}%)")
+
 ##nettoyage de Hourly
 
 ## NORMALISATION de Hourly
@@ -85,6 +104,7 @@ def normalize_hourly_amateur(df, station_id):
 
     # correspondance clés source → clés standard
     key_map = {
+        "Time": "dh_utc",
         "Temperature": "temperature",
         "Pressure": "pression",
         "Humidity": "humidite",
@@ -92,8 +112,7 @@ def normalize_hourly_amateur(df, station_id):
         "Speed": "vent_moyen",
         "Gust": "vent_rafales",
         "Precip. Rate.": "pluie_1h",
-        "Precip. Accum.": "pluie_3h",
-        "Time": "dh_utc"
+        "Precip. Accum.": "pluie_3h"
     }
 
     def clean_val(val, target_key):
@@ -188,7 +207,10 @@ def parse_datetime(value):
     if not value:
         return None
     try:
-        # Format de tes données : "2024-10-05 00:00:00"
+        # Format ISO avec 'T'
+        if 'T' in value:
+            return datetime.fromisoformat(value)
+        # Format avec espace
         return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
     except ValueError:
         return None
@@ -269,6 +291,13 @@ def main():
     meteo_france_amateur = extract_airbyte_data(df2_amateur_france, "france_amateur")
     meteo_belgique_amateur = extract_airbyte_data(df3_amateur_belgique, "belgique_amateur")
 
+        # ====== ANALYSE AVANT NORMALISATION ======
+    analyze_missing_values(meteo_france_amateur, "AMATEUR FRANCE (brut)")
+    analyze_missing_values(meteo_belgique_amateur, "AMATEUR BELGIQUE (brut)")
+    analyze_missing_values(meteo_infoclimat, "INFOCLIMAT (brut)")
+
+
+
     #j'extrait les données qui m'interessent (metadata, stations et hourly)
     stations = [] #liste de dictionnaires : description des stations
     hourly_list = [] #dictionnaire de listes par stations --> transformé en liste de dictionnaires
@@ -327,6 +356,8 @@ def main():
     })
 
 
+
+
     hourly_france = normalize_hourly_amateur(meteo_france_amateur, "ILAMAD25")
     hourly_belgique = normalize_hourly_amateur(meteo_belgique_amateur, "IICHTE19")
 
@@ -362,12 +393,12 @@ def main():
     print(f"Doublons supprimés : {duplicates_rate:.2f}%")
 
     # ----------------------------
-    # TAUX D'ERREUR PAR CHAMP
+    # TAUX DE VALEURS NULLES PAR CHAMPS
     # ----------------------------
     fields_to_check = [
-        "temperature", "pression", "humidite", "point_de_rosee",
+        "dh_utc","temperature", "pression", "humidite", "point_de_rosee",
         "visibilite", "vent_moyen", "vent_rafales", "vent_direction",
-        "pluie_1h", "pluie_3h", "neige_au_sol", "nebulosite", "dh_utc"
+        "pluie_1h", "pluie_3h", "neige_au_sol", "nebulosite"
     ]
 
     total_values = 0
@@ -381,14 +412,13 @@ def main():
                 invalid_count += 1
                 field_errors[field] += 1
 
-    print("\nTaux d'erreur par champ")
+    print("\nTaux de valeurs nulles par champ")
     for field, count in field_errors.items():
         taux = (count / len(all_hourly)) * 100
         print(f"{field}: {count} erreurs sur {len(all_hourly)} lignes ({taux:.2f}%)")
 
     taux_global = (invalid_count / total_values) * 100
-    print(f"\n Taux d'erreur global toutes valeurs confondues : {taux_global:.2f}% "
-          f"({invalid_count}/{total_values} valeurs invalides)")
+    print(f"\n Taux de valeurs nulles global toutes valeurs confondues : {taux_global:.2f}% ")
 
 
     # REGROUPEMENT DES HOURLY PAR STATION
