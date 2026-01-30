@@ -1,36 +1,44 @@
-
-# LOAD
-# INSERTION DANS MONGODB
-
-
 from pymongo import MongoClient
-from collections import defaultdict
 import json
 import os
-from dotenv import load_dotenv  
+from dotenv import load_dotenv
+import boto3  
 
 load_dotenv()
 
-print("MONGO_URI:", os.environ.get("MONGO_URI"))
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION")
+BUCKET_NAME = "ocr-projet8"
+S3_KEY = "refined/stations_transformed.json"
 
-with open("data/stations_transformed.json", "r", encoding="utf-8") as f:
-    documents = json.load(f)
+print(f"AWS Key trouvée : {'Oui' if AWS_ACCESS_KEY_ID else 'Non'}")
+print(f"MONGO_URI : {os.environ.get('MONGO_URI')}")
 
-print(f"OK : {len(documents)} documents charges depuis JSON")
+# --- S3 ---
+def get_s3_client():
+    return boto3.client(
+        "s3",
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_DEFAULT_REGION
+    )
 
+def load_json_from_s3(bucket_name, key):
+    s3 = get_s3_client()
+    response = s3.get_object(Bucket=bucket_name, Key=key)
+    data = response["Body"].read().decode("utf-8")
+    documents = json.loads(data)
+    print(f"OK : {len(documents)} documents chargés depuis S3")
+    return documents
 
+# --- Mongo ---
 def get_mongo_uri():
-    # 1. On vérifie si on est dans Docker
     is_docker = os.path.exists('/.dockerenv')
-    
-    # 2. On récupère la valeur du .env
     env_uri = os.environ.get("MONGO_URI")
-    
     if is_docker:
-        # Dans Docker, on veut "mongodb://mongo:27017/"
         return env_uri if env_uri else "mongodb://mongo:27017/"
     else:
-        # En local, on FORCE localhost, même si le .env dit "mongo"
         return "mongodb://localhost:27017/"
 
 MONGO_URI = get_mongo_uri()
@@ -42,27 +50,27 @@ def get_mongodb_collection():
     print("\nConnexion à MongoDB établie.")
     return db["stations_hourly"]
 
-# Collection unique
-stations_col = get_mongodb_collection()
+# --- Main ---
+def main():
+    # Charger les documents depuis S3
+    documents = load_json_from_s3(BUCKET_NAME, S3_KEY)
 
-# Vider la collection (dev uniquement)
-stations_col.delete_many({})
-print("OK Collection stations_hourly vidée")
+    # Connexion Mongo
+    stations_col = get_mongodb_collection()
 
+    # Dev uniquement : vider la collection
+    stations_col.delete_many({})
+    print("OK Collection stations_hourly vidée")
 
-# INSERTION
-if documents:
-    result = stations_col.insert_many(documents)
-    print(f"OK {len(result.inserted_ids)} stations insérées avec hourly imbriquées")
+    # Insertion
+    if documents:
+        result = stations_col.insert_many(documents)
+        print(f"OK {len(result.inserted_ids)} stations insérées avec hourly imbriquées")
 
+    # Création d'index
+    stations_col.create_index("id", unique=True)
+    stations_col.create_index("hourly.dh_utc")
+    print("OK Index créés sur 'id' et 'hourly.dh_utc'")
 
-# AJOUT : CRÉATION D'INDEX 
-# Index unique sur l'ID station
-stations_col.create_index("id", unique=True)
-print("OK Index unique créé sur 'id'")
-
-# Index sur les dates pour requêtes temporelles
-stations_col.create_index("hourly.dh_utc")
-print("OK Index créé sur 'hourly.dh_utc'")
-
-
+if __name__ == "__main__":
+    main()
