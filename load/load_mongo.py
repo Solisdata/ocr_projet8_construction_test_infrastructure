@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-print("MONGO_URI:", os.environ.get("MONGO_URI"))
+print(f"AWS Key trouvée : {'Oui' if os.environ.get('AWS_ACCESS_KEY_ID') else 'Non'}")
+print(f"MONGO_URI : {os.environ.get('MONGO_URI')}")
 
 with open("data/stations_transformed.json", "r", encoding="utf-8") as f:
     documents = json.load(f)
@@ -32,6 +33,7 @@ def get_mongo_uri():
     else:
         # En local, on FORCE localhost, même si le .env dit "mongo"
         return "mongodb://localhost:27017/"
+
 
 MONGO_URI = get_mongo_uri()
 DB_NAME = "meteo_db"

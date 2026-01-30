@@ -1,21 +1,12 @@
-"""Script d'orchestration ETL 
-
-Exécute le pipeline complet dans l'ordre :
-    1. Tests unitaires (extract_transform/)
-    2. Extract + Transform
-    3. Tests d'intégration (load/)
-    4. Load MongoDB
-"""
-
 import subprocess
 import sys
-
+import os
 
 def run_tests():
     """Lance les tests pytest"""
     print("Lancement des tests unitaires...")
     result = subprocess.run(
-        ["pytest", "-v", "extract_transform/test_extract_transform.py"],
+        [sys.executable, "-m", "pytest", "-v", "extract_transform/test_extract_transform.py"],
         capture_output=True,
         text=True
     )
@@ -24,7 +15,7 @@ def run_tests():
     
     if result.returncode != 0:
         print("\n ÉCHEC : Les tests ont échoué !")
-        print("Le pipeline ETL ne sera PAS exécuté.")
+        print(result.stderr)
         sys.exit(1)
     
     print("\n Tous les tests sont passés !")
@@ -33,17 +24,14 @@ def run_tests():
 def run_et():
     """Lance le pipeline ETL"""
     print("\nLancement du pipeline ET...")
-    
-    # Importer et exécuter le main du ET
     from extract_transform.main_script_extract_transform import main
     main()
-    
     print("\n Pipeline extract_transform terminé !")
 
 def run_integration_tests():
     print("\n Lancement des tests d'intégration...")
     result = subprocess.run(
-        ["python", "load/tests_integration.py"],
+        [sys.executable, "load/tests_integration.py"],
         capture_output=True,
         text=True
     )
@@ -51,15 +39,14 @@ def run_integration_tests():
     print(result.stdout)
 
     if result.returncode != 0:
-        print("\n --- ERREUR DÉTECTÉE DANS LE SCRIPT ---")
-        print(result.stderr)  # <--- AJOUTE ÇA pour voir le Traceback Python
-        print("\n ÉCHEC : Le script de mesure a planté")
+        print("\n --- ERREUR DÉTECTÉE DANS LES TESTS D'INTÉGRATION ---")
+        print(result.stderr)
         sys.exit(1)
 
 def run_load():
     print("\n Lancement de la pipeline Load...")
     result = subprocess.run(
-        ["python", "load/load_mongo.py"],
+        [sys.executable, "load/load_mongo.py"],
         capture_output=True,
         text=True
     )
@@ -74,9 +61,8 @@ def run_load():
 
     print("\n Réussite du Load !")
 
-if __name__ == "__main__":
-    run_tests()    
-    run_et()      # ←  ne s'exécute QUE si tests OK
+if __name__ == "__main__": 
+    run_et()
+    run_tests() 
     run_load()
     run_integration_tests()
-
