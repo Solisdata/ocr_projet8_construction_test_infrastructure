@@ -447,11 +447,16 @@ def main():
     print(f" Documents stations prêts : {len(documents)}")
     # Conversion + sauvegarde
     documents_serializable = make_serializable(documents)
+    s3 = get_s3_client()  # ton client S3 existant
+    s3_key = "refined/stations_transformed.json"
 
-    with open("data/stations_transformed.json", "w", encoding="utf-8") as f:
-        json.dump(documents_serializable, f, ensure_ascii=False, indent=2)
+    # convertir le JSON en bytes
+    json_bytes = json.dumps(documents_serializable, ensure_ascii=False, indent=2).encode("utf-8")
 
-    print(f" JSON sauvegardé avec {len(documents_serializable)} documents")
+    # upload
+    s3.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=json_bytes)
+
+    print(f"JSON sauvegardé sur S3 : s3://{BUCKET_NAME}/{s3_key}")
 
 if __name__ == "__main__":
     main()
