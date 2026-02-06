@@ -15,6 +15,12 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
       - MONGO_URI=${MONGO_URI}
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: /docker/etl-logs
+        awslogs-region: ${AWS_DEFAULT_REGION}
+        awslogs-stream: etl_pipeline
 
   mongo1:
     image: mongo:6
