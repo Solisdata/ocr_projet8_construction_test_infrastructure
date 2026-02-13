@@ -58,7 +58,6 @@ project/
 │   └── pipeline.log                     # Fichier de log généré par le pipeline
 ├── presentations/                      # Contient les documents et visualisations de présentation
 ├── venv/                               # Environnement virtuel Python
-├── .env                                # Variables d'environnement (MongoDB, AWS, etc.)
 ├── .gitignore                           # Fichiers et dossiers ignorés par Git
 ├── docker-compose.yml                  # Configuration Docker pour le projet
 ├── Dockerfile                          # Dockerfile pour containeriser l'application
